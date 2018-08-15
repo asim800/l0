@@ -13,6 +13,7 @@ import tensorflow.contrib.eager as tfe
 from tensorflow.keras import backend as K
 
 import sys
+from datetime import datetime
 import ipdb
 import traceback
 
@@ -182,7 +183,8 @@ def runmymodel(model, learning_rate=0.01, temperature=0.1, max_iter=1000, inst=0
   plt.show()
 
 
-# ipdb.set_trace()
+###################################################################################
+startTime = datetime.now()
 
 learning_rate = 3e-4
 model = MyModel()
@@ -190,7 +192,7 @@ runmymodel(model, learning_rate=learning_rate, temperature=0.1,  max_iter=Max_it
 runmymodel(model, learning_rate=learning_rate, temperature=0.05, max_iter=Max_iter, inst=1)
 runmymodel(model, learning_rate=learning_rate, temperature=0.01, max_iter=Max_iter, inst=2)
 
-
+print('time elapsed: ', datetime.now() - startTime)
 ipdb.set_trace()
 ###################################################################################
 
