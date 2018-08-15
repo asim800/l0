@@ -19,6 +19,7 @@ import traceback
 
 
 from tensorflow.python.keras.engine import Layer
+from tensorflow.python.keras.layers.convolutional import Conv
 from tensorflow.python.eager import context
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.framework import ops
@@ -27,14 +28,13 @@ from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import standard_ops
 from tensorflow.python.keras.engine import InputSpec
 from tensorflow.python.ops import nn
+from tensorflow.python.ops import nn_ops
 
+
+from tensorflow.python.keras.utils import conv_utils
 
 #from official.mnist import dataset as mnist_dataset
 
-lamba = 0.1
-temperature = 0.1
-Max_iter   = 3000
-N = 16
 
 l = tf.keras.layers
 
@@ -45,35 +45,6 @@ def hard_sigmoid(x):
   return tf.minimum(tf.maximum(x, tf.zeros_like(x)), tf.ones_like(x))
 
 
-class l0Norm(Layer):
-  def __init__(self, output_dim, **kwargs):
-    self.output_dim = output_dim
-    super(l0Norm, self).__init__(**kwargs)
-
-  def build(self, input_shape):
-    input_shape = tensor_shape.TensorShape(input_shape)
-    input_dim = int(input_shape[1])
-    self.kernel = self.add_weight(name='kernel',
-                                    shape=(input_dim, self.output_dim),
-                                    initializer='uniform',
-                                    trainable=True)
-#    traceback.print_stack()                                      
-    super(l0Norm, self).build(input_shape)
-
-  def call(self, x):
-    x = ops.convert_to_tensor(x, dtype=self.dtype)
-    print(self.kernel.shape, x.shape)
-
-    return K.dot(x, self.kernel)
-
-  def _get_mask(self):
-    pass
-
-  def compute_output_shape(self, input_shape):
-    input_shape = tensor_shape.TensorShape(input_shape)
-    return input_shape[:-1].concatenate(self.output_dim)
-#    return tensor_shape.TensorShape([input_shape[0]] + [self.output_dim])
-#    return (input_shape[0], self.output_dim)
 
 class L0norm():
   def __init__(self, temp=1.0, **kwargs):
@@ -96,6 +67,13 @@ class L0norm():
     self.beta=2 / 3
     self.gamma_zeta_ratio = np.log(-self.gamma / self.zeta)
 
+  @property
+  def temperature(self):
+    return self._temperature
+
+  @temperature.setter
+  def temperature(self, value):
+    self._temperature = value
 
 ##############################################################
 class l0Dense(tf.keras.layers.Dense, L0norm):
@@ -106,15 +84,6 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
 #   super(l0Dense, self).__init__(units, **kwargs)
 
 
-  @property
-  def temperature(self):
-    return self._temperature
-
-  @temperature.setter
-  def temperature(self, value):
-    self._temperature = value
-
-
   def call(self, inputs, training=True):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
     shape = inputs.get_shape().as_list()
@@ -200,100 +169,97 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
 
 ##############################################################
 
-class l0Conv(tf.keras.layers.Dense):
-  def __init__(self, units, temp=1.0, **kwargs):
-    if 'gamma' not in kwargs:
-      self.gamma = -0.1
-    else:
-      self.gamma = gamma
-    if 'zeta' not in kwargs:
-      self.zeta = 1.1
-    else:
-      self.zeta = zeta
-    if 'loc' not in kwargs:
-      self.loc_mean = 0.
-    else:
-      self.loc_mean = loc_mean
-    self.loc_stddev = 0.1
+class l0Conv(Conv):
+  def __init__(self, rank, filter_size, kernel_size, temp=1.0, **kwargs):
 
-    self.temperature = temp
-
-    self.beta=2 / 3
-    self.gamma_zeta_ratio = np.log(-self.gamma / self.zeta)
-
-    super(l0Dense, self).__init__(units, **kwargs)
-
-
-  @property
-  def temperature(self):
-    return self._temperature
-
-  @temperature.setter
-  def temperature(self, value):
-    self._temperature = value
-
+    L0norm.__init__(self, temp, **kwargs)
+    Conv.__init__(self, rank, filter_size, kernel_size, **kwargs)
 
   def call(self, inputs, training=True):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
     shape = inputs.get_shape().as_list()
     self.training = training
     mask, penalty = self._get_mask()
-    if len(shape) > 2:
-      # Broadcasting is required for the inputs.
-      kernel_new = tf.multiply(self.kernel, mask)
-      outputs = standard_ops.tensordot(inputs, kernel_new, [[len(shape) - 1],
-                                                             [0]])
-      # Reshape the output back to the original ndim of the input.
-      if not context.executing_eagerly():
-        output_shape = shape[:-1] + [self.units]
-        outputs.set_shape(output_shape)
-    else:
-
-      kernel_new = tf.multiply(self.kernel, mask)
-      outputs = gen_math_ops.mat_mul(inputs, kernel_new)
+    kernel_new = tf.multiply(self.kernel, mask)
+    outputs = self._convolution_op(inputs, kernel_new)
 
     if self.use_bias:
-      outputs = nn.bias_add(outputs, self.bias)
+      if self.data_format == 'channels_first':
+        if self.rank == 1:
+          # nn.bias_add does not accept a 1D input tensor.
+          bias = array_ops.reshape(self.bias, (1, self.filters, 1))
+          outputs += bias
+        if self.rank == 2:
+          outputs = nn.bias_add(outputs, self.bias, data_format='NCHW')
+        if self.rank == 3:
+          # As of Mar 2017, direct addition is significantly slower than
+          # bias_add when computing gradients. To use bias_add, we collapse Z
+          # and Y into a single dimension to obtain a 4D input tensor.
+          outputs_shape = outputs.shape.as_list()
+          if outputs_shape[0] is None:
+            outputs_shape[0] = -1
+          outputs_4d = array_ops.reshape(outputs,
+                                         [outputs_shape[0], outputs_shape[1],
+                                          outputs_shape[2] * outputs_shape[3],
+                                          outputs_shape[4]])
+          outputs_4d = nn.bias_add(outputs_4d, self.bias, data_format='NCHW')
+          outputs = array_ops.reshape(outputs_4d, outputs_shape)
+      else:
+        outputs = nn.bias_add(outputs, self.bias, data_format='NHWC')
+
     if self.activation is not None:
-      return self.activation(outputs), penalty  # pylint: disable=not-callable
+      return self.activation(outputs), penalty
+    return outputs, penalty
 
   def build(self, input_shape):
     input_shape = tensor_shape.TensorShape(input_shape)
-    if input_shape[-1].value is None:
-      raise ValueError('The last dimension of the inputs to `Dense` '
+    if self.data_format == 'channels_first':
+      channel_axis = 1
+    else:
+      channel_axis = -1
+    if input_shape[channel_axis].value is None:
+      raise ValueError('The channel dimension of the inputs '
                        'should be defined. Found `None`.')
-    self.input_spec = InputSpec(min_ndim=2,
-                                axes={-1: input_shape[-1].value})
-    self.kernel = self.add_variable('kernel',
-                                    shape=[input_shape[-1].value, self.units],
-                                    initializer=self.kernel_initializer,
-                                    regularizer=self.kernel_regularizer,
-                                    constraint=self.kernel_constraint,
-                                    dtype=self.dtype,
-                                    trainable=True)
+    input_dim = int(input_shape[channel_axis])
+    kernel_shape = self.kernel_size + (input_dim, self.filters)
 
+    self.kernel = self.add_weight(
+        name='kernel',
+        shape=kernel_shape,
+        initializer=self.kernel_initializer,
+        regularizer=self.kernel_regularizer,
+        constraint=self.kernel_constraint,
+        trainable=True,
+        dtype=self.dtype)
     self.loc = self.add_variable('loc',
-                                shape=[input_shape[-1].value, self.units],
-#                                  initializer=tf.keras.initializers.TruncatedNormal(mean=self.loc_mean, stddev=self.loc_stddev, seed=None),
+                                  shape= kernel_shape,
                                   initializer=tf.keras.initializers.RandomNormal(mean=self.loc_mean, stddev=self.loc_stddev, seed=None),
                                   regularizer=None,
                                   constraint=None,
                                   dtype=self.dtype,
                                   trainable=True)
-
     self.loc2 = self.loc.numpy()
-#    self.trainable_weights.extend([self.loc])
-
     if self.use_bias:
-      self.bias = self.add_variable('bias',
-                                    shape=[self.units,],
-                                    initializer=self.bias_initializer,
-                                    regularizer=self.bias_regularizer,
-                                    constraint=self.bias_constraint,
-                                    dtype=self.dtype,
-                                    trainable=True)
+      self.bias = self.add_weight(
+          name='bias',
+          shape=(self.filters,),
+          initializer=self.bias_initializer,
+          regularizer=self.bias_regularizer,
+          constraint=self.bias_constraint,
+          trainable=True,
+          dtype=self.dtype)
     else:
       self.bias = None
+    self.input_spec = InputSpec(ndim=self.rank + 2,
+                                axes={channel_axis: input_dim})
+    self._convolution_op = nn_ops.Convolution(
+        input_shape,
+        filter_shape=self.kernel.get_shape(),
+        dilation_rate=self.dilation_rate,
+        strides=self.strides,
+        padding=self.padding.upper(),
+        data_format=conv_utils.convert_data_format(self.data_format,
+                                                   self.rank + 2))
     self.built = True
 
 
@@ -315,176 +281,6 @@ class l0Conv(tf.keras.layers.Dense):
 #    ipdb.set_trace()
 #    self.mask = hard_sigmoid(ss)    
     return hard_sigmoid(sp), penalty
-
-###################################################################################
-def loss(model, x, y, training=True):
-  logits, penalty = model(x, training)
-  cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=logits))
-  penalty = penalty
-#  ipdb.set_trace()
-
-  return (cross_entropy + lamba*penalty, cross_entropy, penalty)
-
-def grad(model, x):
-  with tf.GradientTape() as tape:
-    loss_value = loss(model, x, y)
-  return tape.gradient(loss_value, model.variables)
-
-###################################################################################
-num_classes = 10
-
-class MyModel(tf.keras.Model):
-  def __init__(self, temp=1.0):
-    super(MyModel, self).__init__()
-    self.d0  = l.Dense(512, activation='relu')
-#    self.d1  = l.Dense(512, activation='relu')
-    self.d1 = l0Dense(512, activation='relu', temp=temp)
-
-    self.d2  = l.Dense(num_classes, activation=None)
-
-    self.temperature = temp
-
-
-#    self.d2  = l.Dense(num_classes, activation='softmax')
-#    self.dtype = K.floatx()
-
-  def call(self, inputs, training=True):
-    net1_cum = tf.zeros([128, 512], dtype=tf.float32)
-#    penalty  = 0 #tf.zeros([1,], dtype=tf.float32)
-
-    inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
-    net = self.d0(inputs)
-
-    # generate MC samples of masks for weights
-    self.d1.temperature = self.temperature
-    for i in range(N):
-      net1, p1= self.d1(net)
-      net1_cum = tf.add(net1_cum, net1)
-
-
-    net1a = net1_cum / float(N)   # average MC samples
-    penalty = p1                  # penalty term does not change with MC samples
-#    ipdb.set_trace()
-    net2= self.d2(net1a)
-
-#    merged_model = tf.keras.layers.concatenate([first_part_output, other_data_input])
-
-    penalty = penalty
-    return net2, penalty
-
-###################################################################################
-batch_size = 128
-x = np.array([[1., 2., 3.], [1., 2., 3.], [1., 2., 3.]])
-
-mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
-
-
-
-
-################################################################################### 
-def runmymodel(model, learning_rate=0.01, temperature=0.1, max_iter=1000, inst=0):
-  model.temperature = temperature
-
-  test_size = mnist.test.num_examples
-  total_batch = int(test_size / batch_size)
-
-  print('test batch: ', total_batch)
-
-  optimizer = tf.train.GradientDescentOptimizer(learning_rate=3e-4)
-  optimizer = tf.train.AdamOptimizer(learning_rate=3e-4)
-
-
-  logdir = './test2'
-  writer = tf.contrib.summary.create_file_writer(logdir) ## Tensorboard
-  global_step=tf.train.get_or_create_global_step()
-  writer.set_as_default()
-
-
-  for i in range(0,max_iter):
-    global_step.assign_add(1)
-    batch = mnist.train.next_batch(batch_size)
-    x = batch[0]
-    y = batch[1]
-
-  #  ipdb.set_trace()
-    with writer.as_default(), tf.contrib.summary.always_record_summaries():
-
-  #    grads = grad(model, x)
-      with tf.GradientTape() as tape:
-        loss_value, rloss , penalty = loss(model, x, y)
-      grads = tape.gradient(loss_value, model.variables)
-
-  #    ipdb.set_trace()
-      optimizer.apply_gradients(zip(grads, model.variables),
-                                  global_step=tf.train.get_or_create_global_step())
-
-      loss_value, rloss , penalty = loss(model, x, y)
-      tf.contrib.summary.scalar('loss', loss_value)
-
-      if i % 1000 == 0:
-        print("Loss at step {:04d}: {:.3f} {:.3f} {:.4f}".format(i, loss_value, rloss, penalty))
-
-
-        loss_buffer = []
-        for i in range(total_batch):
-
-          batch = mnist.test.next_batch(batch_size)
-          x = batch[0]
-          y = batch[1]
-
-          loss_value, rloss, penalty = loss(model, x, y, training=False)
-
-          loss_buffer.append(loss_value.numpy())
-        print('test loss', np.array(loss_buffer).mean(), np.array(loss_buffer).sum())
-
-  loss_buffer = []
-  for i in range(total_batch):
-
-    batch = mnist.test.next_batch(batch_size)
-    x = batch[0]
-    y = batch[1]
-
-    loss_value, rloss, penalty = loss(model, x, y, training=False)
-
-    loss_buffer.append(loss_value.numpy())
-  print('test loss', np.array(loss_buffer).mean(), np.array(loss_buffer).sum())
-
-  # debug info
-
-  temp = str(model.layers[1].temperature)
-  w1=model.layers[1].weights[0].numpy().flatten()
-  w2 = model.layers[1].loc.numpy().flatten()
-  w3 = model.layers[1].loc2.flatten()
-
-  print('#weights quantile:', temp, ' : ', np.percentile(w1, [0,25,50,75,100]))
-  print('#loc     quantile:', temp, ' : ', np.percentile(w2, [0,25,50,75,100]))
-
-  f, axarr = plt.subplots(3,1, sharex=True)
-  axarr[0].hist(w1, 40)
-  axarr[0].grid(True)
-
-  axarr[1].hist(w2, 40)
-  axarr[1].grid(True)
-
-  axarr[2].hist(w3, 40)
-  axarr[2].grid(True)
-
-  plt.title('temp = '+str(temp))
-  plt.savefig(str(inst)+'_weights_temp_'+str(temp)+'.png')
-  plt.show()
-
-
-# ipdb.set_trace()
-
-learning_rate = 3e-4
-model = MyModel()
-runmymodel(model, learning_rate=learning_rate, temperature=0.1,  max_iter=Max_iter, inst=0)
-runmymodel(model, learning_rate=learning_rate, temperature=0.05, max_iter=Max_iter, inst=1)
-runmymodel(model, learning_rate=learning_rate, temperature=0.01, max_iter=Max_iter, inst=2)
-
-
-ipdb.set_trace()
-###################################################################################
 
 
 #checkpoint_dir = ‘/path/to/model_dir’
