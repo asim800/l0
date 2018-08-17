@@ -21,12 +21,14 @@ from l0norm import l0Dense, l0Conv
 
 l = tf.keras.layers
 
+tf.enable_eager_execution()
+
 from tensorflow.python.framework import ops
 ###################################################################################
 lamba = 0.1
 temperature = 0.1
 Max_iter   = 1000
-N = 16
+L = 16
 ###################################################################################
 def loss(model, x, y, training=True):
   logits, penalty = model(x, training)
@@ -70,12 +72,12 @@ class MyModel(tf.keras.Model):
 
     # generate MC samples of masks for weights
     self.d1.temperature = self.temperature
-    for i in range(N):
+    for i in range(L):
       net1, p1= self.d1(net)
       net1_cum = tf.add(net1_cum, net1)
 
 
-    net1a = net1_cum / float(N)   # average MC samples
+    net1a = net1_cum / float(L)   # average MC samples
     penalty = p1                  # penalty term does not change with MC samples
 #    ipdb.set_trace()
     net2= self.d2(net1a)
@@ -206,15 +208,17 @@ def runmymodel(model, learning_rate=0.01, temperature=0.1, max_iter=1000, inst=0
   print('#weights quantile:', temp, ' : ', np.percentile(w1, [0,25,50,75,100]))
   print('#loc     quantile:', temp, ' : ', np.percentile(w2, [0,25,50,75,100]))
 
-  f, axarr = plt.subplots(3,1, sharex=True)
-  axarr[0].hist(w1, 40)
-  axarr[0].grid(True)
+  ax1 = plt.subplot(3,1,1)
+  ax1.hist(w1, 40)
+  ax1.grid(True)
 
-  axarr[1].hist(w2, 40)
-  axarr[1].grid(True)
+  ax2 = plt.subplot(3,1,2)
+  ax2.hist(w2, 40)
+  ax2.grid(True)
 
-  axarr[2].hist(w3, 40)
-  axarr[2].grid(True)
+  ax3 = plt.subplot(3,13, sharex=ax2)
+  ax3.hist(w3, 40)
+  ax3.grid(True)
 
   plt.title('temp = '+str(temp))
   plt.savefig(str(inst)+'_weights_temp_'+str(temp)+'.png')

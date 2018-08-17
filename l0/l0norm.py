@@ -38,7 +38,7 @@ from tensorflow.python.keras.utils import conv_utils
 
 l = tf.keras.layers
 
-tf.enable_eager_execution()
+#tf.enable_eager_execution()
 plt.ion()
 
 def hard_sigmoid(x):
