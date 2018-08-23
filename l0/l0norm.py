@@ -51,16 +51,19 @@ class L0norm():
     if 'gamma' not in kwargs:
       self.gamma = -0.1
     else:
-      self.gamma = gamma
+      self.gamma = kwargs.get(gamma)
     if 'zeta' not in kwargs:
       self.zeta = 1.1
     else:
-      self.zeta = zeta
-    if 'loc' not in kwargs:
+      self.zeta = kwargs.get(zeta)
+    if 'loc_mean' not in kwargs:
       self.loc_mean = 0.
     else:
-      self.loc_mean = loc_mean
-    self.loc_stddev = 0.1
+      self.loc_mean = kwargs.get('loc_mean')
+    if 'loc_std' not in kwargs:
+      self.loc_stddev = 0.1
+    else:
+      self.loc_stddev = kwargs.get('loc_std')
 
     self.temperature = temp
 
@@ -79,7 +82,8 @@ class L0norm():
 class l0Dense(tf.keras.layers.Dense, L0norm):
   def __init__(self, units, activation=None, temp=1.0, **kwargs):
 
-    L0norm.__init__(self, temp, **kwargs)
+#   L0norm.__init__(self, temp, **kwargs)
+    L0norm.__init__(self, temp, loc_mean=0.0, loc_std=0.1, **kwargs)
     tf.keras.layers.Dense.__init__(self,  units, activation, **kwargs)
 #   super(l0Dense, self).__init__(units, **kwargs)
 
@@ -88,7 +92,7 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
     shape = inputs.get_shape().as_list()
     self.training = training
-    mask, penalty = self._get_mask()
+    mask, penalty = self._get_mask(training)
     if len(shape) > 2:
       # Broadcasting is required for the inputs.
       kernel_new = tf.multiply(self.kernel, mask)
@@ -148,11 +152,11 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
     self.built = True
 
 
-  def _get_mask(self):
+  def _get_mask(self, training):
     ''' phi = (log alpha, beta)
     '''
 
-    if self.training:
+    if training:
       mask = tf.ones_like(self.kernel)
       uni = tf.random_uniform(self.kernel.get_shape(), dtype=self.dtype)
       s = tf.log(uni) - tf.log(1.-uni)
@@ -172,14 +176,15 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
 class l0Conv(Conv):
   def __init__(self, rank, filter_size, kernel_size, temp=1.0, **kwargs):
 
-    L0norm.__init__(self, temp, **kwargs)
+    L0norm.__init__(self, temp, loc_mean=0.0, loc_std=0.1, **kwargs)
     Conv.__init__(self, rank, filter_size, kernel_size, **kwargs)
 
   def call(self, inputs, training=True):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
     shape = inputs.get_shape().as_list()
+    self.l0_input_shape = shape
     self.training = training
-    mask, penalty = self._get_mask()
+    mask, penalty = self._get_mask(training)
     kernel_new = tf.multiply(self.kernel, mask)
     outputs = self._convolution_op(inputs, kernel_new)
 
@@ -263,11 +268,11 @@ class l0Conv(Conv):
     self.built = True
 
 
-  def _get_mask(self):
+  def _get_mask(self, training):
     ''' phi = (log alpha, beta)
     '''
 
-    if self.training:
+    if training:
       mask = tf.ones_like(self.kernel)
       uni = tf.random_uniform(self.kernel.get_shape(), dtype=self.dtype)
       s = tf.log(uni) - tf.log(1.-uni)
@@ -281,6 +286,47 @@ class l0Conv(Conv):
 #    ipdb.set_trace()
 #    self.mask = hard_sigmoid(ss)    
     return hard_sigmoid(sp), penalty
+
+  def _plot_weights(self, name=0):
+
+    w1 = self.weights[0].numpy().flatten()
+    w2 = self.loc.numpy().flatten()
+    w3 = self.loc2.flatten()
+    temp = str(self.temperature)
+
+# print('#weights quantile:', temp, ' : ', np.percentile(w1, [0,25,50,75,100]))
+# print('#loc     quantile:', temp, ' : ', np.percentile(w2, [0,25,50,75,100]))
+
+    plt.figure()
+    ax1 = plt.subplot(3,1,1)
+    ax1.hist(w1, 40)
+    ax1.grid(True)
+
+    ax2 = plt.subplot(3,1,2)
+    ax2.hist(w2, 40)
+    ax2.grid(True)
+
+    ax3 = plt.subplot(3,1,3, sharex=ax2)
+    ax3.hist(w3, 40)
+    ax3.grid(True)
+
+    plt.title('temp = '+str(temp))
+    plt.savefig('_weights_temp_'+str(temp)+'.png')
+    plt.show()
+
+    plt.figure()
+    loc=self.loc.numpy().flatten()
+    mask_t, p1=self._get_mask(True)
+    mask_tf = mask_t.numpy().flatten()
+    mask_f, p1=self._get_mask(False)
+    mask_ff = mask_f.numpy().flatten()
+    plt.hist(loc, 40);
+    plt.hist(mask_tf, 40);
+    plt.hist(mask_ff, 40);
+    plt.grid(True)
+    plt.legend(['loc', 'mask_true', 'mask_false'])
+    plt.show()
+    plt.savefig(str(name)+'_loc.png')
 
 
 #checkpoint_dir = ‘/path/to/model_dir’

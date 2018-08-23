@@ -20,6 +20,7 @@ import traceback
 
 from tensorflow.python.framework import ops
 
+from l0norm import l0Dense, l0Conv
 
 import functools
 
@@ -32,15 +33,16 @@ plt.ion()
 
 ###################################################################################
 lamba = 0.1
-temperature = 0.1
-Max_iter   = 100
-L = 16
+#temperature = 0.1
+Max_iter   = 10000
+L = 256
 ###################################################################################
 def loss(model, x, y, training=True):
-  logits, penalty = model(x, training)
+  logits = model(x, training)
+  if isinstance(logits, tuple):
+    logits, penalty = logits
   cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=logits))
   penalty = penalty
-#  ipdb.set_trace()
 
   return (cross_entropy + lamba*penalty, cross_entropy, penalty)
 
@@ -65,17 +67,22 @@ class HeReLuNormalInitializer(tf.initializers.random_normal):
 num_classes = 10
 tf.set_random_seed(0)
 class ModelBasicCNN(tf.keras.Model):
-  def __init__(self, nb_classes, nb_filters, **kwargs):
-    del kwargs
+  def __init__(self, nb_classes, nb_filters, temp, **kwargs):
+#   del kwargs
 #       Model.__init__(self, scope, nb_classes, locals())
     super(ModelBasicCNN, self).__init__()
     self.nb_classes = nb_classes
     self.nb_filters = nb_filters
+
+    self._temperature = temp
     my_conv = functools.partial(tf.keras.layers.Conv2D, activation=tf.nn.relu) #,
 #                               kernel_initializer=HeReLuNormalInitializer)
 #       with tf.variable_scope(self.scope, reuse=tf.AUTO_REUSE):
+
     self.c0 = my_conv(self.nb_filters, 8, strides=(2,2), padding='same')
-    self.c1 = my_conv(2 * self.nb_filters, 6, strides=2, padding='valid')
+#   self.c1 = my_conv(2 * self.nb_filters, 6, strides=2, padding='valid')
+    self.c1 = l0Conv(2, 2*nb_filters, 6, strides=2, padding='valid', temp=self.temperature, **kwargs)
+#   self.c2 = l0Conv(2, 2*nb_filters, 6, strides=2, padding='valid', temp=self.temperature, **kwargs)
     self.c2 = my_conv(2 * self.nb_filters, 5, strides=1, padding='valid')
     self.f3 = tf.keras.layers.Flatten()
     self.d4 = tf.keras.layers.Dense(
@@ -87,18 +94,39 @@ class ModelBasicCNN(tf.keras.Model):
     x = ops.convert_to_tensor(x, dtype=self.dtype)
 
     net = self.c0(x)
-    net = self.c1(net)
+
+    net1_cum, p1= self.c1(net, training)
+#   net1_cum = tf.zeros_like(net1, dtype=tf.float32)
+    for i in range(L):
+      net1, penalty = self.c1(net, training)
+      net1_cum = tf.add(net1_cum, net1)
+
+    net = net1_cum / float(L)   # average MC samples
+
+#   net = self.c1(net, training)
+#   net = self.c1(net)
+#   if isinstance(net, tuple):
+#     net, penalty = net
+#   else:
+#     penalty = tfe.Variable(0.0).value()
+
     net = self.c2(net)
+#   net, penalty = self.c2(net, training)
     net = self.f3(net)
     logits = self.d4(net)
 
-
 #   return {self.O_LOGITS: logits,
 #           self.O_PROBS: tf.nn.softmax(logits=logits)}
-    penalty = tfe.Variable(0.0).value()
     return logits, penalty
 
 
+  @property
+  def temperature(self):
+    return self._temperature
+
+  @temperature.setter
+  def temperature(self, value):
+    self._temperature = value
 ###################################################################################
 batch_size = 128
 x = np.array([[1., 2., 3.], [1., 2., 3.], [1., 2., 3.]])
@@ -108,21 +136,24 @@ mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 
 
 ################################################################################### 
-def runmymodel(model, optimizer, step_counter, learning_rate, temperature=0.1, max_iter=1000, inst=0, checkpoint=None):
+def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter=1000, inst=0, checkpoint=None):
 # model2.temperature = temperature
 
+# model.c1.temperature = temp
   test_size = mnist.test.num_examples
   total_batch = int(test_size / batch_size)
 
   print('test batch: ', total_batch)
-
-
+  # get all L0 classes in the model and set temperature to temp
+  L0layers = [m for m in model.layers if (type(m) is l0Conv) or (type(m) is l0Dense)]
+  for m in L0layers:
+    m.temperature = temp
 
   checkpoint_dir = './ckpt'
   checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
   latest_ckpt = tf.train.latest_checkpoint(checkpoint_dir)
 
-  for i in range(0,max_iter):
+  for i in range(0,max_iter+1):
     global_step.assign_add(1)
     batch = mnist.train.next_batch(batch_size)
     x = batch[0]
@@ -144,11 +175,19 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temperature=0.1, m
       loss_value, rloss , penalty = loss(model, x, y)
       tf.contrib.summary.scalar('loss', loss_value)
 
+      logits, p1 = model_objects['model'](x, False)
+      corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(logits, axis=-1))
+      corrects = tf.cast(corrects, tf.float32)
+      acc = tf.reduce_mean(tf.cast(corrects, tf.float32))
+      tf.contrib.summary.scalar('accuracy', acc)
+
+
       if i % 1000 == 0:
+
+
         print("Loss at step {:04d}: {:.3f} {:.3f} {:.4f}".format(i, loss_value, rloss, penalty))
 
-
-        loss_buffer = []
+        loss_buffer = []; acc_buffer=[]
         for i in range(total_batch):
 
           batch = mnist.test.next_batch(batch_size)
@@ -157,9 +196,18 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temperature=0.1, m
           y = batch[1]
 
           loss_value, rloss, penalty = loss(model, x, y, training=False)
+          logits, p1 = model_objects['model'](x, False)
+          corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(logits, axis=-1))
+          corrects = tf.cast(corrects, tf.float32)
+          acc = tf.reduce_mean(tf.cast(corrects, tf.float32))
 
           loss_buffer.append(loss_value.numpy())
+          acc_buffer.append(acc.numpy())
         print('test loss', np.array(loss_buffer).mean(), np.array(loss_buffer).sum())
+        print('test accuracy', np.array(acc_buffer).mean())
+
+
+
 
 # learning_rate.assign(learning_rate / 2.0)
   checkpoint.save(file_prefix=checkpoint_prefix)
@@ -178,41 +226,18 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temperature=0.1, m
     loss_buffer.append(loss_value.numpy())
   print('test loss', np.array(loss_buffer).mean(), np.array(loss_buffer).sum())
 
+  if (issubclass(type(model.c1), l0Conv) or issubclass(type(model.c1), l0Dense) ):
+    model.c1._plot_weights()
+
+  eps = 1e-2
+  for m in L0layers:
+    mask  = m._get_mask(False)[0].numpy()
+    mp = mask[mask > eps]
+    print('compression ratio: ',  mp.shape[0] / np.prod(mask.shape))
+    m._plot_weights(name=m.name+str(inst))
+
   # debug info
 
-# temp = str(model.layers[1].temperature)
-  w1=model.layers[1].weights[0].numpy().flatten()
-# w2 = model.layers[1].loc.numpy().flatten()
-# w3 = model.layers[1].loc2.flatten()
-
-# print('#weights quantile:', temp, ' : ', np.percentile(w1, [0,25,50,75,100]))
-# print('#loc     quantile:', temp, ' : ', np.percentile(w2, [0,25,50,75,100]))
-
-  plt.figure()
-  ax1 = plt.subplot(3,1,1)
-  ax1.hist(w1, 40)
-  ax1.grid(True)
-
-  ax2 = plt.subplot(3,1,2)
-# ax2.hist(w2, 40)
-  ax2.grid(True)
-
-  ax3 = plt.subplot(3,1,3, sharex=ax2)
-# ax3.hist(w3, 40)
-  ax3.grid(True)
-# f, axarr = plt.subplots(3,1, sharex=True)
-# axarr[0].hist(w1, 40)
-# axarr[0].grid(True)
-
-# axarr[1].hist(w2, 40)
-# axarr[1].grid(True)
-
-# axarr[2].hist(w3, 40)
-# axarr[2].grid(True)
-
-# plt.title('temp = '+str(temp))
-# plt.savefig(str(inst)+'_weights_temp_'+str(temp)+'.png')
-  plt.show()
 
 
 ###################################################################################
@@ -229,7 +254,7 @@ n_filters = 64
 n_classes = 10
 
 
-model_objects = {'model': ModelBasicCNN(n_classes, n_filters),
+model_objects = {'model': ModelBasicCNN(n_classes, n_filters, temp=0.1),
                   'optimizer': optimizer,
                   'learning_rate':learning_rate,
                   'step_counter':tf.train.get_or_create_global_step(),
@@ -244,17 +269,24 @@ checkpoint_dir = './ckpt'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 latest_ckpt = tf.train.latest_checkpoint(checkpoint_dir)
 if latest_ckpt:
-  print('Using latest checkpoint at ' + latest_ckpt)  
+  print('Using latest checkpoint at ' + latest_ckpt)
 checkpoint = tf.train.Checkpoint(**model_objects)
 
 checkpoint.restore(latest_ckpt)
 
-runmymodel(**model_objects, temperature=0.1,  max_iter=Max_iter, inst=0, checkpoint=checkpoint)
-#runmymodel(**model_objects, temperature=0.05, max_iter=Max_iter, inst=0, checkpoint=checkpoint)
-#runmymodel(**model_objects, temperature=0.01, max_iter=Max_iter, inst=0, checkpoint=checkpoint)
+runmymodel(**model_objects, temp=1.0,  max_iter=Max_iter, inst=0, checkpoint=checkpoint)
+runmymodel(**model_objects, temp=0.05, max_iter=Max_iter, inst=1, checkpoint=checkpoint)
+runmymodel(**model_objects, temp=0.01, max_iter=Max_iter, inst=2, checkpoint=checkpoint)
 
 
 
+print('time elapsed: ', datetime.now() - startTime)
 ipdb.set_trace()
 
-
+# aa, p1=model_objects['model'].c1._get_mask(False)
+# plt.hist(aa.numpy().flatten(),40)
+# zt = model_objects['model'].c1._get_mask(False)
+# zt = model_objects['model'].c1._get_mask(True)[0].numpy()
+# zf = model_objects['model'].c1._get_mask(False)[0].numpy()
+# ztp = zt[zt>0.001]
+# ztp.shape[0]/np.prod(zt.shape)

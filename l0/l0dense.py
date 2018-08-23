@@ -149,7 +149,6 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temperature=0.1, m
   checkpoint.save(file_prefix=checkpoint_prefix)
   checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
-  ipdb.set_trace()
   loss_buffer = []
   for i in range(total_batch):
 
@@ -224,7 +223,7 @@ checkpoint_dir = './ckpt'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 latest_ckpt = tf.train.latest_checkpoint(checkpoint_dir)
 if latest_ckpt:
-  print('Using latest checkpoint at ' + latest_ckpt)  
+  print('Using latest checkpoint at ' + latest_ckpt)
 checkpoint = tf.train.Checkpoint(**model_objects)
 
 checkpoint.restore(latest_ckpt)
