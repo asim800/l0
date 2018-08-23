@@ -1,4 +1,5 @@
 MNIST_data
 test2
+*.swp
 *.png
 __pycache__
