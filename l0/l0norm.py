@@ -78,6 +78,66 @@ class L0norm():
   def temperature(self, value):
     self._temperature = value
 
+  def _get_mask(self, training):
+    ''' phi = (log alpha, beta)
+    '''
+
+    if training:
+      mask = tf.ones_like(self.kernel)
+      uni = tf.random_uniform(self.kernel.get_shape(), dtype=self.dtype)
+      s = tf.log(uni) - tf.log(1.-uni)
+      s   = tf.sigmoid((tf.log(uni) - tf.log(1.-uni) + self.loc ) / self.temperature )   # s RV
+      sp   = s * (self.zeta - self.gamma) + self.gamma                            # stretched RV
+      penalty = tf.reduce_mean(tf.sigmoid(self.loc - self.temperature * self.gamma_zeta_ratio))
+    else:
+      sp = tf.sigmoid(self.loc) * (self.zeta - self.gamma) + self.gamma
+      penalty=0.
+#    plt.hist(ss.numpy().flatten(),20)
+#    ipdb.set_trace()
+#    self.mask = hard_sigmoid(ss)    
+    return hard_sigmoid(sp), penalty
+
+  def _plot_weights(self, name=0):
+
+    w1 = self.weights[0].numpy().flatten()
+    w2 = self.loc.numpy().flatten()
+    w3 = self.loc2.flatten()
+    temp = str(self.temperature)
+
+# print('#weights quantile:', temp, ' : ', np.percentile(w1, [0,25,50,75,100]))
+# print('#loc     quantile:', temp, ' : ', np.percentile(w2, [0,25,50,75,100]))
+
+    plt.figure()
+    ax1 = plt.subplot(3,1,1)
+    ax1.hist(w1, 40)
+    ax1.grid(True)
+
+    ax2 = plt.subplot(3,1,2)
+    ax2.hist(w2, 40)
+    ax2.grid(True)
+
+    ax3 = plt.subplot(3,1,3, sharex=ax2)
+    ax3.hist(w3, 40)
+    ax3.grid(True)
+
+    plt.title('temp = '+str(temp))
+    plt.savefig('_weights_temp_'+str(temp)+'.png')
+    plt.show()
+
+    plt.figure()
+    loc=self.loc.numpy().flatten()
+    mask_t, p1=self._get_mask(True)
+    mask_tf = mask_t.numpy().flatten()
+    mask_f, p1=self._get_mask(False)
+    mask_ff = mask_f.numpy().flatten()
+    plt.hist(loc, 40);
+    plt.hist(mask_tf, 40);
+    plt.hist(mask_ff, 40);
+    plt.grid(True)
+    plt.legend(['loc', 'mask_true', 'mask_false'])
+    plt.show()
+    plt.savefig(str(name)+'_loc.png')
+
 ##############################################################
 class l0Dense(tf.keras.layers.Dense, L0norm):
   def __init__(self, units, activation=None, temp=1.0, **kwargs):
@@ -267,66 +327,6 @@ class l0Conv(Conv):
                                                    self.rank + 2))
     self.built = True
 
-
-  def _get_mask(self, training):
-    ''' phi = (log alpha, beta)
-    '''
-
-    if training:
-      mask = tf.ones_like(self.kernel)
-      uni = tf.random_uniform(self.kernel.get_shape(), dtype=self.dtype)
-      s = tf.log(uni) - tf.log(1.-uni)
-      s   = tf.sigmoid((tf.log(uni) - tf.log(1.-uni) + self.loc ) / self.temperature )   # s RV
-      sp   = s * (self.zeta - self.gamma) + self.gamma                            # stretched RV
-      penalty = tf.reduce_mean(tf.sigmoid(self.loc - self.temperature * self.gamma_zeta_ratio))
-    else:
-      sp = tf.sigmoid(self.loc) * (self.zeta - self.gamma) + self.gamma
-      penalty=0.
-#    plt.hist(ss.numpy().flatten(),20)
-#    ipdb.set_trace()
-#    self.mask = hard_sigmoid(ss)    
-    return hard_sigmoid(sp), penalty
-
-  def _plot_weights(self, name=0):
-
-    w1 = self.weights[0].numpy().flatten()
-    w2 = self.loc.numpy().flatten()
-    w3 = self.loc2.flatten()
-    temp = str(self.temperature)
-
-# print('#weights quantile:', temp, ' : ', np.percentile(w1, [0,25,50,75,100]))
-# print('#loc     quantile:', temp, ' : ', np.percentile(w2, [0,25,50,75,100]))
-
-    plt.figure()
-    ax1 = plt.subplot(3,1,1)
-    ax1.hist(w1, 40)
-    ax1.grid(True)
-
-    ax2 = plt.subplot(3,1,2)
-    ax2.hist(w2, 40)
-    ax2.grid(True)
-
-    ax3 = plt.subplot(3,1,3, sharex=ax2)
-    ax3.hist(w3, 40)
-    ax3.grid(True)
-
-    plt.title('temp = '+str(temp))
-    plt.savefig('_weights_temp_'+str(temp)+'.png')
-    plt.show()
-
-    plt.figure()
-    loc=self.loc.numpy().flatten()
-    mask_t, p1=self._get_mask(True)
-    mask_tf = mask_t.numpy().flatten()
-    mask_f, p1=self._get_mask(False)
-    mask_ff = mask_f.numpy().flatten()
-    plt.hist(loc, 40);
-    plt.hist(mask_tf, 40);
-    plt.hist(mask_ff, 40);
-    plt.grid(True)
-    plt.legend(['loc', 'mask_true', 'mask_false'])
-    plt.show()
-    plt.savefig(str(name)+'_loc.png')
 
 
 #checkpoint_dir = ‘/path/to/model_dir’
