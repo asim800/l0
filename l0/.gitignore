@@ -3,3 +3,4 @@ test2
 *.swp
 *.png
 __pycache__
+ckpt*

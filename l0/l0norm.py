@@ -81,7 +81,6 @@ class L0norm():
   def _get_mask(self, training):
     ''' phi = (log alpha, beta)
     '''
-
     if training:
       mask = tf.ones_like(self.kernel)
       uni = tf.random_uniform(self.kernel.get_shape(), dtype=self.dtype)
@@ -92,9 +91,6 @@ class L0norm():
     else:
       sp = tf.sigmoid(self.loc) * (self.zeta - self.gamma) + self.gamma
       penalty=0.
-#    plt.hist(ss.numpy().flatten(),20)
-#    ipdb.set_trace()
-#    self.mask = hard_sigmoid(ss)    
     return hard_sigmoid(sp), penalty
 
   def _plot_weights(self, name=0):
@@ -233,11 +229,11 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
 
 ##############################################################
 
-class l0Conv(Conv):
+class l0Conv(Conv, L0norm):
   def __init__(self, rank, filter_size, kernel_size, temp=1.0, **kwargs):
 
-    L0norm.__init__(self, temp, loc_mean=0.0, loc_std=0.1, **kwargs)
     Conv.__init__(self, rank, filter_size, kernel_size, **kwargs)
+    L0norm.__init__(self, temp, loc_mean=0.0, loc_std=0.1, **kwargs)
 
   def call(self, inputs, training=True):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)

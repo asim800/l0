@@ -37,17 +37,12 @@ plt.ion()
 ###################################################################################
 lamba = 0.1
 #temperature = 0.1
-Max_iter   = 100
-L = 16
+Max_iter   = 10000
 ###################################################################################
-def loss(model, x, y, training=True):
-  logits = model(x, training)
-  if isinstance(logits, tuple):
-    logits, penalty = logits
-  cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=logits))
-  penalty = penalty
+def loss(yhat, y, training=True):
+  cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=yhat))
+  return cross_entropy 
 
-  return (cross_entropy + lamba*penalty, cross_entropy, penalty)
 
 def grad(model, x):
   with tf.GradientTape() as tape:
@@ -83,7 +78,6 @@ mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter=1000, inst=0, checkpoint=None):
 # model2.temperature = temperature
 
-# model.c1.temperature = temp
   test_size = mnist.test.num_examples
   total_batch = int(test_size / batch_size)
 
@@ -104,32 +98,46 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
     x = batch[0].reshape(input_shape)
     y = batch[1]
 
-  #  ipdb.set_trace()
     with writer.as_default(), tf.contrib.summary.always_record_summaries():
-
   #    grads = grad(model, x)
       with tf.GradientTape() as tape:
-        loss_value, rloss , penalty = loss(model, x, y)
+        model_out = model(x, training=True)
+        if len(model_out) == 1:
+          yhat = model_out[0]
+          penalty = None
+        elif len(model_out) == 2:
+          yhat, penalty = model_out
+        else:
+          print('Non-standard model output')
+        loss_value = loss(yhat, y)
+        if len(model_out) == 2:
+          loss_value = loss_value + lamba*penalty
+
       grads = tape.gradient(loss_value, model.variables)
 
-  #    ipdb.set_trace()
       optimizer.apply_gradients(zip(grads, model.variables),
                                   global_step=tf.train.get_or_create_global_step())
 
-      loss_value, rloss , penalty = loss(model, x, y)
       tf.contrib.summary.scalar('loss', loss_value)
 
-      logits, p1 = model_objects['model'](x, False)
-      corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(logits, axis=-1))
+      model_out = model_objects['model'](x, False)
+      if len(model_out) == 1:
+        yhat = model_out[0]
+      elif len(model_out) == 2:
+        yhat, penalty = model_out
+      else:
+        print('Non-standard model output')
+      corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(yhat, axis=-1))
       corrects = tf.cast(corrects, tf.float32)
       acc = tf.reduce_mean(tf.cast(corrects, tf.float32))
       tf.contrib.summary.scalar('accuracy', acc)
 
 
       if i % 1000 == 0:
-
-
-        print("Loss at step {:04d}: {:.3f} {:.3f} {:.4f}".format(i, loss_value, rloss, penalty))
+        if penalty is None:
+          print("Loss at step {:04d}:  {:.3f} {:.3f}".format(i, loss_value, acc))
+        else:
+          print("Loss at step {:04d}: {:.3f} {:.3f} {:.4f}".format(i, loss_value, acc, penalty))
 
         loss_buffer = []; acc_buffer=[]
         for i in range(total_batch):
@@ -139,9 +147,14 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
           x = batch[0].reshape(input_shape)
           y = batch[1]
 
-          loss_value, rloss, penalty = loss(model, x, y, training=False)
-          logits, p1 = model_objects['model'](x, False)
-          corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(logits, axis=-1))
+          model_out = model_objects['model'](x, False)
+          if len(model_out) == 1:
+            yhat = model_out[0]
+          elif len(model_out) == 2:
+            yhat, penalty = model_out
+          else:
+            print('Non-standard model output')
+          corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(yhat, axis=-1))
           corrects = tf.cast(corrects, tf.float32)
           acc = tf.reduce_mean(tf.cast(corrects, tf.float32))
 
@@ -165,7 +178,17 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
     x = batch[0].reshape(input_shape)
     y = batch[1]
 
-    loss_value, rloss, penalty = loss(model, x, y, training=False)
+    model_out = model(x, training=False)
+    if len(model_out) == 1:
+      yhat = model_out[0]
+      penalty = None
+    elif len(model_out) == 2:
+      yhat, penalty = model_out
+    else:
+      print('Non-standard model output')
+    loss_value = loss(yhat, y)
+    if len(model_out) == 2:
+      loss_value = loss_value + lamba*penalty
 
     loss_buffer.append(loss_value.numpy())
   print('test loss', np.array(loss_buffer).mean(), np.array(loss_buffer).sum())
@@ -197,10 +220,16 @@ optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 n_filters = 64
 n_classes = 10
 
-#model_obj = ModelBasicCNN(n_classes, n_filters, temp=0.1)
 input_shape = (batch_size, 28, 28, 1)
-model_obj = MyModel()
-input_shape = (batch_size, 784)
+#model_obj = ModelBasicCNN(n_classes, n_filters, temp=0.1)
+model_obj = L0ModelBasicCNN(n_classes, n_filters, temp=0.1)
+
+#input_shape = (batch_size, 784)
+#model_obj = L0ModelBasicDense()
+#model_obj = ModelBasicDense()
+
+
+
 model_objects = {'model': model_obj,
                   'optimizer': optimizer,
                   'learning_rate':learning_rate,
@@ -221,7 +250,7 @@ checkpoint = tf.train.Checkpoint(**model_objects)
 
 checkpoint.restore(latest_ckpt)
 
-runmymodel(**model_objects, temp=1.0,  max_iter=Max_iter, inst=0, checkpoint=checkpoint)
+runmymodel(**model_objects, temp=2.0,  max_iter=Max_iter, inst=0, checkpoint=checkpoint)
 runmymodel(**model_objects, temp=0.05, max_iter=Max_iter, inst=1, checkpoint=checkpoint)
 runmymodel(**model_objects, temp=0.01, max_iter=Max_iter, inst=2, checkpoint=checkpoint)
 
@@ -237,3 +266,9 @@ ipdb.set_trace()
 # zf = model_objects['model'].c1._get_mask(False)[0].numpy()
 # ztp = zt[zt>0.001]
 # ztp.shape[0]/np.prod(zt.shape)
+
+
+
+# traceback.print_stack()
+# print(sys.exc_info()[0])
+
