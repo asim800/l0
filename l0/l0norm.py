@@ -16,6 +16,7 @@ from tensorflow.keras import backend as K
 import sys
 import ipdb
 import traceback
+import pickle
 
 
 from tensorflow.python.keras.engine import Layer
@@ -32,6 +33,7 @@ from tensorflow.python.ops import nn_ops
 
 
 from tensorflow.python.keras.utils import conv_utils
+
 
 #from official.mnist import dataset as mnist_dataset
 
@@ -133,14 +135,21 @@ class L0norm():
     plt.legend(['loc', 'mask_true', 'mask_false'])
     plt.show()
     plt.savefig(str(name)+'_loc.png')
+    for i, w in enumerate(self.weights):
+      with open(str(name)+'_w'+str(i)+'.pkl', 'wb') as f:
+        pickle.dump(w.numpy(), f)
+
+#     np.savetxt(str(name)+'_w'+str(i)+'.txt', w.numpy())
+
 
 ##############################################################
 class l0Dense(tf.keras.layers.Dense, L0norm):
-  def __init__(self, units, activation=None, temp=1.0, **kwargs):
+  def __init__(self, units, activation=None, temp=1.0, L=16, **kwargs):
 
 #   L0norm.__init__(self, temp, **kwargs)
     L0norm.__init__(self, temp, loc_mean=0.0, loc_std=0.1, **kwargs)
     tf.keras.layers.Dense.__init__(self,  units, activation, **kwargs)
+    self.L = L
 #   super(l0Dense, self).__init__(units, **kwargs)
 
 
@@ -148,25 +157,37 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
     shape = inputs.get_shape().as_list()
     self.training = training
-    mask, penalty = self._get_mask(training)
-    if len(shape) > 2:
-      # Broadcasting is required for the inputs.
+    for i in range(self.L):
+      mask, penalty = self._get_mask(training)
       kernel_new = tf.multiply(self.kernel, mask)
-      outputs = standard_ops.tensordot(inputs, kernel_new, [[len(shape) - 1],
-                                                             [0]])
-      # Reshape the output back to the original ndim of the input.
-      if not context.executing_eagerly():
-        output_shape = shape[:-1] + [self.units]
-        outputs.set_shape(output_shape)
-    else:
+      if len(shape) > 2:
+        # Broadcasting is required for the inputs.
+        if i==0:
+          outputs = standard_ops.tensordot(inputs, kernel_new, [[len(shape) - 1],
+                                                                 [0]])
+        else:
+          outputs += standard_ops.tensordot(inputs, kernel_new, [[len(shape) - 1],
+                                                                 [0]])
+        # Reshape the output back to the original ndim of the input.
+        if not context.executing_eagerly():
+          output_shape = shape[:-1] + [self.units]
+          outputs.set_shape(output_shape)
+      else:
+        if i==0:
+          outputs = gen_math_ops.mat_mul(inputs, kernel_new)
+        else:
+          outputs += gen_math_ops.mat_mul(inputs, kernel_new)
 
-      kernel_new = tf.multiply(self.kernel, mask)
-      outputs = gen_math_ops.mat_mul(inputs, kernel_new)
+      # add bias inside the sample loop
+      if self.use_bias:
+        outputs = nn.bias_add(outputs, self.bias)
 
-    if self.use_bias:
-      outputs = nn.bias_add(outputs, self.bias)
+    # take mean
+    outputs = outputs / float(self.L)
+
     if self.activation is not None:
       return self.activation(outputs), penalty  # pylint: disable=not-callable
+    return outputs
 
   def build(self, input_shape):
     input_shape = tensor_shape.TensorShape(input_shape)
@@ -211,9 +232,9 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
   def _get_mask(self, training):
     ''' phi = (log alpha, beta)
     '''
-
     if training:
       mask = tf.ones_like(self.kernel)
+#     ipdb.set_trace()
       uni = tf.random_uniform(self.kernel.get_shape(), dtype=self.dtype)
       s = tf.log(uni) - tf.log(1.-uni)
       s   = tf.sigmoid((tf.log(uni) - tf.log(1.-uni) + self.loc ) / self.temperature )   # s RV
@@ -230,44 +251,54 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
 ##############################################################
 
 class l0Conv(Conv, L0norm):
-  def __init__(self, rank, filter_size, kernel_size, temp=1.0, **kwargs):
+  def __init__(self, rank, filter_size, kernel_size, temp=1.0, L=16,  **kwargs):
 
     Conv.__init__(self, rank, filter_size, kernel_size, **kwargs)
     L0norm.__init__(self, temp, loc_mean=0.0, loc_std=0.1, **kwargs)
+    self.filter_size1 = filter_size
+    self.kernel_size1 = kernel_size
+    self.L = L
 
   def call(self, inputs, training=True):
     inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
     shape = inputs.get_shape().as_list()
     self.l0_input_shape = shape
     self.training = training
-    mask, penalty = self._get_mask(training)
-    kernel_new = tf.multiply(self.kernel, mask)
-    outputs = self._convolution_op(inputs, kernel_new)
-
-    if self.use_bias:
-      if self.data_format == 'channels_first':
-        if self.rank == 1:
-          # nn.bias_add does not accept a 1D input tensor.
-          bias = array_ops.reshape(self.bias, (1, self.filters, 1))
-          outputs += bias
-        if self.rank == 2:
-          outputs = nn.bias_add(outputs, self.bias, data_format='NCHW')
-        if self.rank == 3:
-          # As of Mar 2017, direct addition is significantly slower than
-          # bias_add when computing gradients. To use bias_add, we collapse Z
-          # and Y into a single dimension to obtain a 4D input tensor.
-          outputs_shape = outputs.shape.as_list()
-          if outputs_shape[0] is None:
-            outputs_shape[0] = -1
-          outputs_4d = array_ops.reshape(outputs,
-                                         [outputs_shape[0], outputs_shape[1],
-                                          outputs_shape[2] * outputs_shape[3],
-                                          outputs_shape[4]])
-          outputs_4d = nn.bias_add(outputs_4d, self.bias, data_format='NCHW')
-          outputs = array_ops.reshape(outputs_4d, outputs_shape)
+    for i in range(self.L):
+      mask, penalty = self._get_mask(training)
+      kernel_new = tf.multiply(self.kernel, mask)
+      if i==0:
+        outputs = self._convolution_op(inputs, kernel_new)
       else:
-        outputs = nn.bias_add(outputs, self.bias, data_format='NHWC')
+        outputs += self._convolution_op(inputs, kernel_new)
 
+      # add bias inside the sample loop
+      if self.use_bias:
+        if self.data_format == 'channels_first':
+          if self.rank == 1:
+            # nn.bias_add does not accept a 1D input tensor.
+            bias = array_ops.reshape(self.bias, (1, self.filters, 1))
+            outputs += bias
+          if self.rank == 2:
+            outputs = nn.bias_add(outputs, self.bias, data_format='NCHW')
+          if self.rank == 3:
+            # As of Mar 2017, direct addition is significantly slower than
+            # bias_add when computing gradients. To use bias_add, we collapse Z
+            # and Y into a single dimension to obtain a 4D input tensor.
+            outputs_shape = outputs.shape.as_list()
+            if outputs_shape[0] is None:
+              outputs_shape[0] = -1
+            outputs_4d = array_ops.reshape(outputs,
+                                           [outputs_shape[0], outputs_shape[1],
+                                            outputs_shape[2] * outputs_shape[3],
+                                            outputs_shape[4]])
+            outputs_4d = nn.bias_add(outputs_4d, self.bias, data_format='NCHW')
+            outputs = array_ops.reshape(outputs_4d, outputs_shape)
+        else:
+          outputs = nn.bias_add(outputs, self.bias, data_format='NHWC')
+
+    # take mean
+    outputs = outputs / float(self.L)
     if self.activation is not None:
       return self.activation(outputs), penalty
     return outputs, penalty

@@ -41,7 +41,7 @@ Max_iter   = 10000
 ###################################################################################
 def loss(yhat, y, training=True):
   cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=yhat))
-  return cross_entropy 
+  return cross_entropy
 
 
 def grad(model, x):
@@ -74,7 +74,7 @@ mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 
 
 
-################################################################################### 
+###################################################################################
 def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter=1000, inst=0, checkpoint=None):
 # model2.temperature = temperature
 
@@ -90,6 +90,7 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
   checkpoint_dir = './ckpt'
   checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
   latest_ckpt = tf.train.latest_checkpoint(checkpoint_dir)
+
 
   for i in range(0,max_iter+1):
     global_step.assign_add(1)
@@ -120,13 +121,13 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
 
       tf.contrib.summary.scalar('loss', loss_value)
 
-      model_out = model_objects['model'](x, False)
-      if len(model_out) == 1:
-        yhat = model_out[0]
-      elif len(model_out) == 2:
-        yhat, penalty = model_out
-      else:
-        print('Non-standard model output')
+#     model_out = model_objects['model'](x, False)
+#     if len(model_out) == 1:
+#       yhat = model_out[0]
+#     elif len(model_out) == 2:
+#       yhat, penalty = model_out
+#     else:
+#       print('Non-standard model output')
       corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(yhat, axis=-1))
       corrects = tf.cast(corrects, tf.float32)
       acc = tf.reduce_mean(tf.cast(corrects, tf.float32))
@@ -250,8 +251,8 @@ checkpoint = tf.train.Checkpoint(**model_objects)
 
 checkpoint.restore(latest_ckpt)
 
-runmymodel(**model_objects, temp=2.0,  max_iter=Max_iter, inst=0, checkpoint=checkpoint)
-runmymodel(**model_objects, temp=0.05, max_iter=Max_iter, inst=1, checkpoint=checkpoint)
+runmymodel(**model_objects, temp=1.0,  max_iter=Max_iter, inst=0, checkpoint=checkpoint)
+runmymodel(**model_objects, temp=0.5, max_iter=Max_iter, inst=1, checkpoint=checkpoint)
 runmymodel(**model_objects, temp=0.01, max_iter=Max_iter, inst=2, checkpoint=checkpoint)
 
 
