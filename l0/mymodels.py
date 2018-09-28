@@ -80,7 +80,6 @@ class ModelBasicCNN(tf.keras.Model):
 
 
 ###################################################################################
-L = 128
 
 ###################################################################################
 
@@ -161,7 +160,7 @@ class ModelBasicDense(tf.keras.Model):
 
 
 class L0ModelBasicDense(tf.keras.Model):
-  def __init__(self, temp=1.0):
+  def __init__(self, temp=1.0, L=1):
     super(L0ModelBasicDense, self).__init__()
     self.num_classes = 10
     self.d0 = l0Dense(512, activation='relu', temp=temp, L=L )
@@ -188,5 +187,15 @@ class L0ModelBasicDense(tf.keras.Model):
     return (net2, penalty)
 
 
+
+
+  @property
+  def nsamps(self):
+    return self.d0.L
+
+  @nsamps.setter
+  def nsamps(self, value):
+    self.d0.L = value
+    self.d1.L = value
 ###################################################################################
 #    merged_model = tf.keras.layers.concatenate([first_part_output, other_data_input])

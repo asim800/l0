@@ -80,6 +80,14 @@ class L0norm():
   def temperature(self, value):
     self._temperature = value
 
+  @property
+  def nsamps(self):
+    return self.L
+
+  @nsamps.setter
+  def nsamps(self, value):
+    self.L = value
+
   def _get_mask(self, training):
     ''' phi = (log alpha, beta)
     '''
@@ -159,6 +167,7 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
     self.training = training
     for i in range(self.L):
       mask, penalty = self._get_mask(training)
+#     ipdb.set_trace()
       kernel_new = tf.multiply(self.kernel, mask)
       if len(shape) > 2:
         # Broadcasting is required for the inputs.
@@ -229,24 +238,6 @@ class l0Dense(tf.keras.layers.Dense, L0norm):
     self.built = True
 
 
-  def _get_mask(self, training):
-    ''' phi = (log alpha, beta)
-    '''
-    if training:
-      mask = tf.ones_like(self.kernel)
-#     ipdb.set_trace()
-      uni = tf.random_uniform(self.kernel.get_shape(), dtype=self.dtype)
-      s = tf.log(uni) - tf.log(1.-uni)
-      s   = tf.sigmoid((tf.log(uni) - tf.log(1.-uni) + self.loc ) / self.temperature )   # s RV
-      sp   = s * (self.zeta - self.gamma) + self.gamma                            # stretched RV
-      penalty = tf.reduce_mean(tf.sigmoid(self.loc - self.temperature * self.gamma_zeta_ratio))
-    else:
-      sp = tf.sigmoid(self.loc) * (self.zeta - self.gamma) + self.gamma
-      penalty=0.
-#    plt.hist(ss.numpy().flatten(),20)
-#    ipdb.set_trace()
-#    self.mask = hard_sigmoid(ss)    
-    return hard_sigmoid(sp), penalty
 
 ##############################################################
 
