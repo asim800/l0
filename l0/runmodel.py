@@ -1,6 +1,7 @@
 
 
 
+import argparse
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -44,13 +45,9 @@ try:
   tmpdir = os.environ["TMPDIR"]
 except KeyError:
   tmpdir = ""
-#os.environ["TMPDIR"] = os.environ['HOME'] + '/tmp'
+os.environ["TMPDIR"] = os.environ['HOME'] + '/tmp'
 
 print('................', os.environ.get('TMPDIR'))
-###################################################################################
-lamba = 0.1
-#temperature = 0.1
-Max_iter   = 10
 ###################################################################################
 def loss(yhat, y, training=True):
   cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=yhat))
@@ -80,10 +77,6 @@ class HeReLuNormalInitializer(tf.initializers.random_normal):
 
 
 ###################################################################################
-batch_size = 128
-x = np.array([[1., 2., 3.], [1., 2., 3.], [1., 2., 3.]])
-
-mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
 
 
 
@@ -104,6 +97,12 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
   checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
   latest_ckpt = tf.train.latest_checkpoint(checkpoint_dir)
 
+  logdir = './test2'
+  writer = tf.contrib.summary.create_file_writer(logdir) ## Tensorboard
+  global_step=tf.train.get_or_create_global_step()
+  writer.set_as_default()
+
+  global_step = step_counter
 
   for i in range(0,max_iter+1):
     global_step.assign_add(1)
@@ -165,7 +164,7 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
           x = batch[0].reshape(input_shape)
           y = batch[1]
 
-          model_out = model_objects['model'](x, False)
+          model_out = model(x, False)
           if len(model_out) == 1:
             yhat = model_out[0]
           elif len(model_out) == 2:
@@ -227,145 +226,174 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
 ###################################################################################
 startTime = datetime.now()
 
+###################################################################################
+lamba = 0.1
+#temperature = 0.1
+Max_iter   = 10
 learn_rate = 3e-4
 #model2 = ModelBasicCNN()/coding/python/tf/l0v1
 
-learning_rate = tfe.Variable(learn_rate, name='learning_rate')
-optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
-optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+batch_size = 128
 
-n_filters = 64
-n_classes = 10
-
-#input_shape = (batch_size, 28, 28, 1)
-#model_obj = ModelBasicCNN(n_classes, n_filters, temp=0.1)
-#model_obj = L0ModelBasicCNN(n_classes, n_filters, temp=0.1)
-
-input_shape = (batch_size, 784)
-model_obj = L0ModelBasicDense()
-#model_obj = ModelBasicDense()
-
-
-
-model_objects = {'model': model_obj,
-                  'optimizer': optimizer,
-                  'learning_rate':learning_rate,
-                  'step_counter':tf.train.get_or_create_global_step(),
-                  }
-
-logdir = './test2'
-writer = tf.contrib.summary.create_file_writer(logdir) ## Tensorboard
-global_step=tf.train.get_or_create_global_step()
-writer.set_as_default()
-
-checkpoint_dir = './ckpt'
-checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
-latest_ckpt = tf.train.latest_checkpoint(checkpoint_dir)
-if latest_ckpt:
-  print('Using latest checkpoint at ' + latest_ckpt)
-checkpoint = tf.train.Checkpoint(**model_objects)
-
-checkpoint.restore(latest_ckpt)
-
-#runmymodel(**model_objects, temp=1.0,  max_iter=Max_iter, inst=0, checkpoint=checkpoint)
-#runmymodel(**model_objects, temp=0.5, max_iter=Max_iter, inst=1, checkpoint=checkpoint)
-runmymodel(**model_objects, temp=0.01, max_iter=Max_iter, inst=2, checkpoint=checkpoint)
-
-print('time elapsed: ', datetime.now() - startTime)
-startTime = datetime.now()
-
-#####################################
-Npop = 50     # 50 realizations
+Npop = 5     # 50 realizations
 Navg = 1
 Nsamples = [1, 2, 5, 10, 50, 100]
-#Nsamples = [1, 10, ]
+Nsamples = [1, 2, ]
 
-test_size = mnist.test.num_examples
-test_batch_size = int(test_size / batch_size)
 
-model = model_obj
 
-#acc_buffer = [list() for i in Npop for j in range(len(Nsamples))]
-#acc_buffer = [[[list() for k in range(z)] for i in range(Npop)] for z in Nsamples]
-acc_buffer  = [[list() for i in range(Npop)] for k in range(len(Nsamples))]
-acc_buffer2 = [[list() for i in range(Npop)] for k in range(len(Nsamples))]
-m_batch = np.zeros((test_batch_size,))
-m_stats = np.zeros((len(Nsamples), Npop))
-s_stats = np.zeros((len(Nsamples), Npop))
-for k, Nsamps in enumerate(Nsamples):
-  loop_cnt = 0
-  loopTime = datetime.now()
-  for i in range(Npop):
+mnist = input_data.read_data_sets('MNIST_data', one_hot=True)
+input_shape = (batch_size, 784)
+###################################################################################
 
-    m_batch_samps = []
-    model_objects['model'].nsamps = Nsamps
-    print('Nsamps .. ', model_objects['model'].d0.L)
-    m_arr = np.zeros((Nsamps, test_batch_size))
+def main():
 
-    for l in range(test_batch_size):
-      batch = mnist.test.next_batch(batch_size)
-      x = batch[0]
-      x = batch[0].reshape(input_shape)
-      y = batch[1]
+  parser = argparse.ArgumentParser(description='Example with non-optional arguments')
 
-      #model_out = tf.stop_gradient(model_objects['model'](x, True))
-      model_out = model_objects['model'](x, True)
-      if len(model_out) == 1:
-        yhat = model_out[0]
-      elif len(model_out) == 2:
-        yhat, penalty = model_out
-      else:
-        print('Non-standard model output')
-      corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(yhat, axis=-1))
-      corrects = tf.cast(corrects, tf.float32)
-      m_batch[l] = tf.reduce_mean(tf.cast(corrects, tf.float32)).numpy()
+#  parser.add_argument('lamba', action="store", type=float)
+#  parser.add_argument('Npop', action="store", default=10, type=int)
 
-      loop_cnt += 1
+#  print(parser.parse_args())
 
-    acc_buffer2[k][i].append(m_batch) # j
-    m_batch_samps.append(m_batch)
+  startTime = datetime.now()
+  for i,arg in enumerate(sys.argv[1:]):
+    if i==0:
+      lamba = float(arg)
+    elif i==1:
+      Max_iter=int(arg)
+    elif i==2:
+      Npop = int(arg)
 
-#   print('i: ', i,' ', loop_cnt)
 
-    m_batch2 = np.dstack(acc_buffer2[k][i])
-    #m_batch2 = np.dstack(m_batch_samps)
-    acc_buffer[k][i] = np.dstack(acc_buffer2[k][i]).squeeze(0).mean(axis=1)
-#np.concatenate(acc_buffer[k][i]) # for i 0 aggregate batches
+    print(arg)
 
-  mean_arr = np.array([np.array(buf).mean() for buf in acc_buffer[k]]) # mean accross samples
-  std_arr  = np.array([np.array(buf).std()  for buf in acc_buffer[k]])
+  learning_rate = tfe.Variable(learn_rate, name='learning_rate')
+  optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
+  optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 
-  print('time elapsed: ', datetime.now() - loopTime)
-  m_stats[k,:] = mean_arr
-  s_stats[k,:] = std_arr
+  n_filters = 64
+  n_classes = 10
 
-# ipdb.set_trace()
-  print('k: ', k, ' ', loop_cnt)
+  #input_shape = (batch_size, 28, 28, 1)
+  #model_obj = ModelBasicCNN(n_classes, n_filters, temp=0.1)
+  #model_obj = L0ModelBasicCNN(n_classes, n_filters, temp=0.1)
 
-acc = np.array(m_stats).T
-plt.figure()
-plt.plot(acc)
-plt.savefig('acc.png', bbox_inches='tight')
-acc = pd.DataFrame(acc, columns=Nsamples)
-#plt.figure();ax = sns.boxplot(acc);plt.show()
-plt.figure()
-ax=sns.boxplot(x="variable", y="value",  data=pd.melt(acc));plt.show()
-ax.axes.get_xaxis().set_ticklabels(Nsamples)
-ax.set_xlabel('Number of Samples')
-ax.set_ylabel('Accuracy')
-ax.set_title('Sparse Neural Network with L0 Regularization')
-plt.savefig('cv001.png', bbox_inches='tight')
+  model_obj = L0ModelBasicDense()
+  #model_obj = ModelBasicDense()
 
-with open('l02_data.pkl', 'wb') as f:
-  pickle.dump([acc_buffer2, acc_buffer, acc], f)
 
-#ipdb.set_trace()
-if tmpdir == "":
-  del os.environ['TMPDIR']
-else:
-  os.environ["TMPDIR"] = tmpdir
-print('time elapsed: ', datetime.now() - startTime)
-ipdb.set_trace()
+  model_objects = {'model': model_obj,
+                    'optimizer': optimizer,
+                    'learning_rate':learning_rate,
+                    'step_counter':tf.train.get_or_create_global_step(),
+                    }
+
+
+  checkpoint_dir = './ckpt'
+  checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+  latest_ckpt = tf.train.latest_checkpoint(checkpoint_dir)
+  if latest_ckpt:
+    print('Using latest checkpoint at ' + latest_ckpt)
+  checkpoint = tf.train.Checkpoint(**model_objects)
+
+  checkpoint.restore(latest_ckpt)
+
+  runmymodel(**model_objects, temp=1.0,  max_iter=Max_iter, inst=0, checkpoint=checkpoint)
+  runmymodel(**model_objects, temp=0.5, max_iter=Max_iter, inst=1, checkpoint=checkpoint)
+  runmymodel(**model_objects, temp=0.01, max_iter=Max_iter, inst=2, checkpoint=checkpoint )
+
+  print('time elapsed: ', datetime.now() - startTime)
+  startTime = datetime.now()
+
+  #####################################
+
+  test_size = mnist.test.num_examples
+  test_batch_size = int(test_size / batch_size)
+
+  model = model_obj
+
+  #acc_buffer = [list() for i in Npop for j in range(len(Nsamples))]
+  #acc_buffer = [[[list() for k in range(z)] for i in range(Npop)] for z in Nsamples]
+  acc_buffer  = [[list() for i in range(Npop)] for k in range(len(Nsamples))]
+  acc_buffer2 = [[list() for i in range(Npop)] for k in range(len(Nsamples))]
+  m_batch = np.zeros((test_batch_size,))
+  m_stats = np.zeros((len(Nsamples), Npop))
+  s_stats = np.zeros((len(Nsamples), Npop))
+  for k, Nsamps in enumerate(Nsamples):
+    loop_cnt = 0
+    loopTime = datetime.now()
+    for i in range(Npop):
+
+      m_batch_samps = []
+      model_objects['model'].nsamps = Nsamps
+      print('Nsamps .. ', model_objects['model'].d0.L)
+      m_arr = np.zeros((Nsamps, test_batch_size))
+
+      for l in range(test_batch_size):
+        batch = mnist.test.next_batch(batch_size)
+        x = batch[0]
+        x = batch[0].reshape(input_shape)
+        y = batch[1]
+
+        #model_out = tf.stop_gradient(model_objects['model'](x, True))
+        model_out = model_objects['model'](x, True)
+        if len(model_out) == 1:
+          yhat = model_out[0]
+        elif len(model_out) == 2:
+          yhat, penalty = model_out
+        else:
+          print('Non-standard model output')
+        corrects = tf.equal(tf.argmax(y, axis=-1), tf.argmax(yhat, axis=-1))
+        corrects = tf.cast(corrects, tf.float32)
+        m_batch[l] = tf.reduce_mean(tf.cast(corrects, tf.float32)).numpy()
+
+        loop_cnt += 1
+
+      acc_buffer2[k][i].append(m_batch) # j
+      m_batch_samps.append(m_batch)
+
+  #   print('i: ', i,' ', loop_cnt)
+
+      m_batch2 = np.dstack(acc_buffer2[k][i])
+      #m_batch2 = np.dstack(m_batch_samps)
+      acc_buffer[k][i] = np.dstack(acc_buffer2[k][i]).squeeze(0).mean(axis=1)
+  #np.concatenate(acc_buffer[k][i]) # for i 0 aggregate batches
+
+    mean_arr = np.array([np.array(buf).mean() for buf in acc_buffer[k]]) # mean accross samples
+    std_arr  = np.array([np.array(buf).std()  for buf in acc_buffer[k]])
+
+    print('time elapsed: ', datetime.now() - loopTime)
+    m_stats[k,:] = mean_arr
+    s_stats[k,:] = std_arr
+
+  # ipdb.set_trace()
+    print('k: ', k, ' ', loop_cnt)
+
+  acc = np.array(m_stats).T
+  plt.figure()
+  plt.plot(acc)
+  plt.savefig('acc.png', bbox_inches='tight')
+  acc = pd.DataFrame(acc, columns=Nsamples)
+  #plt.figure();ax = sns.boxplot(acc);plt.show()
+  plt.figure()
+  ax=sns.boxplot(x="variable", y="value",  data=pd.melt(acc));plt.show()
+  ax.axes.get_xaxis().set_ticklabels(Nsamples)
+  ax.set_xlabel('Number of Samples')
+  ax.set_ylabel('Accuracy')
+  ax.set_title('Sparse Neural Network with L0 Regularization')
+  plt.savefig('cv001.png', bbox_inches='tight')
+
+  with open('l02_data.pkl', 'wb') as f:
+    pickle.dump([acc_buffer2, acc_buffer, acc], f)
+
+  if tmpdir == "":
+    del os.environ['TMPDIR']
+  else:
+    os.environ["TMPDIR"] = tmpdir
+  print('time elapsed: ', datetime.now() - startTime)
+
+if __name__== "__main__":
+  main()
 
 # aa, p1=model_objects['model'].c1._get_mask(False)
 # plt.hist(aa.numpy().flatten(),40)
