@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 
+
+import argparse
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,6 +15,7 @@ warnings.filterwarnings("always")
 import tensorflow.contrib.eager as tfe
 from tensorflow.keras import backend as K
 
+import os
 import sys
 import ipdb
 import traceback
@@ -72,6 +75,15 @@ class L0norm():
     self.beta=2 / 3
     self.gamma_zeta_ratio = np.log(-self.gamma / self.zeta)
 
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--outfolder', type=str, default='./outfolder',
+                        help='print output logs')
+                        
+    cmdargs, unparsed = parser.parse_known_args()
+    cmdargs = vars(cmdargs)                  
+    self.outfolder = cmdargs['outfolder']
+
   @property
   def temperature(self):
     return self._temperature
@@ -127,7 +139,7 @@ class L0norm():
     ax3.grid(True)
 
     plt.title('temp = '+str(temp))
-    plt.savefig('_weights_temp_'+str(temp)+'.png')
+    plt.savefig(os.path.join(self.outfolder, '_weights_temp_'+str(temp)+'.png'))
     plt.show()
 
     plt.figure()
@@ -142,9 +154,11 @@ class L0norm():
     plt.grid(True)
     plt.legend(['loc', 'mask_true', 'mask_false'])
     plt.show()
-    plt.savefig(str(name)+'_loc.png')
+    plt.savefig(os.path.join(self.outfolder, str(name)+'_loc.png'))
     for i, w in enumerate(self.weights):
-      with open(str(name)+'_w'+str(i)+'.pkl', 'wb') as f:
+      filename=str(name)+'_w'+str(i)+'.pkl'
+#      with open(os.path.join(outfolder, filename), 'wb') as f:
+      with open(os.path.join(self.outfolder, filename), 'wb') as f:
         pickle.dump(w.numpy(), f)
 
 #     np.savetxt(str(name)+'_w'+str(i)+'.txt', w.numpy())
