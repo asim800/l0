@@ -127,7 +127,6 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
 
     with writer.as_default(), tf.contrib.summary.always_record_summaries():
 
-
 #     if i==0:
 #       print(model.summary())
 
@@ -198,7 +197,8 @@ def runmymodel(model, optimizer, step_counter, learning_rate, temp=0.1, max_iter
 
 
 # learning_rate.assign(learning_rate / 2.0)
-  checkpoint.save(file_prefix=checkpoint_prefix)
+  if ckpt:
+    checkpoint.save(file_prefix=checkpoint_prefix)
   checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
 
   loss_buffer = []
@@ -244,14 +244,14 @@ startTime = datetime.now()
 #lamba = 0.1
 #temperature = 0.1
 max_iter   = 10
-learn_rate = 3e-4
+#learn_rate = 3e-4
 #model2 = ModelBasicCNN()/coding/python/tf/l0v1
 
 batch_size = 128
 
 Npop = 50     # 50 realizations
 Navg = 1
-Nsamples = [1, 2, 5, 10, 50, 100]
+#Nsamples = [1, 2, 5, 10, 50, 100]
 #Nsamples = [1, 2, ]
 
 
@@ -411,7 +411,10 @@ def main():
   yy =[y.numpy() for z in zz for y in z]
   x, y=[list(t) for t in zip(*zz)]
   x, y=[list((lambda x: x.numpy())(x) for x in t) for t in zip(*zz)]
-  plt.figure();plt.spy(x[0]);plt.show()
+#  plt.figure();plt.spy(x[0]);plt.show()
+  plt.figure();plt.spy(x[0], markersize=2, precision=0.1)
+  plt.title('L0 mask for layer 1 '+r'$\lambda$='+str(lamda))
+  plt.savefig('l0mask_01layer.png', bbox_inches='tight');plt.show()
 
   if tmpdir == "":
     del os.environ['TMPDIR']
@@ -431,12 +434,16 @@ if __name__== "__main__":
                       help='Number of steps to run trainer.')  
   parser.add_argument('--Npop', type=int, default=50,
                       help='If true, uses fake data for unit testing.')
+  parser.add_argument('--learn_rate', type=float, default=3e-4,
+                      help='Number of steps to run trainer.')                      
   parser.add_argument('--outfolder', type=str, default=outdir,
                       help='print output logs')
   parser.add_argument('--ckptfolder', type=str, default='./ckpt',
                       help='print output logs')                                            
   parser.add_argument('--nsamples', nargs='+', type=int, default=[1, 2, 5, 10, 50, 100],
                       help='Keep probability for training dropout.')
+  parser.add_argument('--ckpt', type=int, default=True,
+                      help='save ckpt')                      
 #  parser.add_argument('--nsamples', type=str, default='1, 2, 5, 10, 50, 100',
 #                      help='Keep probability for training dropout.')                      
 # args, unparsed = parser.parse_known_args()
@@ -473,3 +480,7 @@ if __name__== "__main__":
 # import sys
 # print("%x" % sys.maxsize, sys.maxsize > 2**32)
 # CUDA_VISIBLE_DEVICES=0 python3 runmodel.py --lamda 2.0 --max_iter 1 --nsamples 1 2 --ckptfolder ./ckpt01 --outfolder out20
+
+
+# CUDA_VISIBLE_DEVICES=1 python3 runmodel.py --lamda 2.0 --ckptfolder ./ckpt2_0 --outfolder ./out2_0 --max_iter 10 --nsamples 1 2 --ckpt 0
+# CUDA_VISIBLE_DEVICES=1 python3 runmodel.py --lamda 1.0 --ckptfolder ./ckpt1_0 --outfolder ./out1_0 --max_iter 1000000
